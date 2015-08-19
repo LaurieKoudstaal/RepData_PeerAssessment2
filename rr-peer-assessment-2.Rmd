@@ -13,6 +13,7 @@ output:
 ## Requirements
 ```{r}
 require(dplyr)
+require(ggplot2)
 ```
 
 ## Loading and Processing the Raw Data
@@ -36,4 +37,31 @@ if (!file.exists(BZ_FILE_NAME)) {
 ```{r}
 bz_file <- bzfile(BZ_FILE_NAME)
 storm_data <- tbl_df(read.csv(bz_file))
+```
+
+```{r}
+by_evtype <- storm_data %>% 
+        group_by(EVTYPE) %>%
+        summarise(fatalaties = sum(FATALITIES), injuries = sum(INJURIES))
+```
+
+```{r}
+evt_count <- dim(by_evtype)[1]
+top_evtype <- by_evtype %>%
+        filter(rank(fatalaties, ties.method='first') > (evt_count - 10) | rank(injuries, ties.method = 'first' ) > (evt_count - 10))
+```
+
+```{r}
+ggplot(top_evtype) + 
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        aes(x = reorder(EVTYPE, fatalaties), y = fatalaties) +
+        geom_bar(stat = "identity")
+```
+
+```{r}
+top_evtype <- arrange(top_evtype, injuries)
+ggplot(top_evtype) + 
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        aes(x = reorder(EVTYPE, injuries), y = injuries) +
+        geom_bar(stat = "identity")
 ```
