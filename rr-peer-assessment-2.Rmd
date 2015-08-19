@@ -10,6 +10,11 @@ output:
 ## Synopsis
 
 
+## Requirements
+```{r}
+require(dplyr)
+```
+
 ## Loading and Processing the Raw Data
 ### Fetching data
 Data was originally fetched on 19 August 2015.
@@ -30,5 +35,5 @@ if (!file.exists(BZ_FILE_NAME)) {
 
 ```{r}
 bz_file <- bzfile(BZ_FILE_NAME)
-
+storm_data <- tbl_df(read.csv(bz_file))
 ```
