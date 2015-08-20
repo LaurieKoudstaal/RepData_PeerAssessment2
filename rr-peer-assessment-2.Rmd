@@ -11,7 +11,7 @@ output:
 
 
 ## Requirements
-```{r}
+```{r requirements}
 require(dplyr)
 require(ggplot2)
 ```
@@ -19,13 +19,13 @@ require(ggplot2)
 ## Loading and Processing the Raw Data
 ### Fetching data
 Data was originally fetched on 19 August 2015.
-```{r}
+```{r fetching data}
 BZ_FILE_NAME <- 'StormData.csv.bz2'
 
 if (!file.exists(BZ_FILE_NAME)) {
         download.file(
                 url = 'https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2',
-                destfile = BZ_FILE,
+                destfile = BZ_FILE_NAME,
                 method = 'curl'
         )
 }
@@ -34,12 +34,12 @@ if (!file.exists(BZ_FILE_NAME)) {
 
 ### Load the data
 
-```{r}
+```{r loading data }
 bz_file <- bzfile(BZ_FILE_NAME)
 storm_data <- tbl_df(read.csv(bz_file))
 ```
 
-```{r}
+```{r health effects by event type}
 by_evtype <- storm_data %>% 
         group_by(EVTYPE) %>%
         summarise(fatalaties = sum(FATALITIES), injuries = sum(INJURIES))
@@ -55,7 +55,11 @@ top_evtype <- by_evtype %>%
 ggplot(top_evtype) + 
         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
         aes(x = reorder(EVTYPE, fatalaties), y = fatalaties) +
-        geom_bar(stat = "identity")
+        geom_bar(stat = "identity") +
+        geom_text(aes(label = fatalaties), vjust = 0) +
+        xlab("Event Type") +
+        ylab("Number of Fatalaties") +
+        ggtitle("Most Fatal Events")
 ```
 
 ```{r}
@@ -63,5 +67,9 @@ top_evtype <- arrange(top_evtype, injuries)
 ggplot(top_evtype) + 
         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
         aes(x = reorder(EVTYPE, injuries), y = injuries) +
-        geom_bar(stat = "identity")
+        geom_bar(stat = "identity") +
+        geom_text(aes(label = injuries), vjust = 0) +
+        xlab("Event Type") +
+        ylab("Number of Injuries") +
+        ggtitle("Most Injury-Causing Events")
 ```
