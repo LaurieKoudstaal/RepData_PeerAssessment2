@@ -1,28 +1,31 @@
 ---
-title: 'Reproducible Research: Peer Assessment 2'
+title: 'Most Damaging Weather Events in US (1996-2011)'
 output: 
         html_document: 
                 keep_md: true
 ---
-
-# Most Impactful Weather Events
-
 ## Synopsis
-In this report we aim to determine which weather events int he US are most
-impactful on both life and limb, as well as economically. To investigate this,
-we obtained data from the US National Weather Service for the years 1950 to 
-2011.
+In this report we aim to determine which weather events in the US have had the
+greatest impact on both life and limb, as well as economically. To investigate this,
+we obtained data from the US National Weather Service for the years 1996 to 
+2011. We found that tornadoes are the most leathal and injurious weather event, 
+and the third most damaging. Flood is the most economically damaging and
+significant in terms of health impact.
 
-## Requirements
+## Data Processing
+
+### Requirements
+This analysis requires the following packages.
 ```{r requirements}
 require(dplyr)
 require(tidyr)
 require(ggplot2)
 ```
 
-## Loading and Processing the Raw Data
+### Obtaining Data
 We obtained the data from the [National Weather Service](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
-on 19 August 2015.
+on 19 August 2015 as follows. Further details on the data set can be found
+by referring to the [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf).
 ```{r fetching data}
 BZ_FILE_NAME <- 'StormData.csv.bz2'
 
@@ -35,41 +38,258 @@ if (!file.exists(BZ_FILE_NAME)) {
 }
 ```
 
-
 ### Load the data
-
+The raw data is loaded into a data frame table.
 ```{r loading data, cache=TRUE}
 bz_file <- bzfile(BZ_FILE_NAME)
 storm_data <- tbl_df(read.csv(bz_file))
-
-clean_data <- storm_data %>% select(event_type = EVTYPE, 
-                                    fatalities = FATALITIES,
-                                    injuries = INJURIES
-                                    )
-
-clean_data <- gather(clean_data, health_effect, health_effect_count, fatalities, injuries)
-
-by_event_type <- group_by(clean_data, event_type, health_effect) %>%
-        summarise(health_effect_count = sum(health_effect_count))
 ```
 
+Initially, we clean the data by removing all weather events that had no
+fatalities, injuries, crop damage and property damage. This greatly reduces the
+number of unique event types and has no impact on the analysis.
+
+We are only interested in injuries, fatalities, and economic damage, so we
+select these columns.
+```{r filterting all-zero data}
+intermediate_data <- storm_data %>% 
+        filter(FATALITIES > 0 | INJURIES > 0 | CROPDMG > 0 | PROPDMG > 0) %>%
+        select(event_type = EVTYPE, fatalities = FATALITIES, injuries = INJURIES,
+               crop_damage = CROPDMG, crop_damage_exponent = CROPDMGEXP,
+               property_damage = PROPDMG, property_damage_exponent = PROPDMGEXP,
+               begin_date = BGN_DATE)
+```
+
+[According to NOAA](https://www.ncdc.noaa.gov/stormevents/details.jsp), only the
+dates from Jan 1996 contain the full 48 weather types. Therefore, we have opted
+to remove dates earlier than this.
+```{r filtering dates}
+intermediate_data <- intermediate_data[
+        strptime(intermediate_data$begin_date, "%m/%d/%Y") >= as.POSIXlt("1996-01-01"),
+        ]
+```
+
+The max date is:
+```{r max date}
+max(strptime(intermediate_data$begin_date, "%m/%d/%Y"))
+```
+
+The min date is:
+```{r min date}
+min(strptime(intermediate_data$begin_date, "%m/%d/%Y"))
+```
+
+Next we look at property and crop damage. We first looked at the existing 
+"exponents," which are codes for multiples to apply to the data. According to 
+the documentation (in section 2.7), the only defined codes are K, M and B. We 
+assume that where they appear in lowercase, they should be uppercase. Apart 
+from this, all other codes are undefined, so we remove records with them.
+```{r}
+intermediate_data$crop_damage_exponent <-
+        toupper(intermediate_data$crop_damage_exponent)
+intermediate_data$property_damage_exponent <-
+        toupper(intermediate_data$property_damage_exponent)
+
+intermediate_data <- intermediate_data %>%
+        filter(crop_damage_exponent %in% c("K", "M", "B")) %>%
+        filter(property_damage_exponent %in% c("K", "M", "B"))
+```
+
+Further cleaning the data involves multiplying the damage by the values for the
+codes. The values are "K" -> 1,000, "M" -> 1,000,000 and "B" -> 1,000,000,000. 
+The documentation is ambiguous as to what no code means, therefore, we assume it
+is in dollars and use a multiple of 1.
 
 ```{r}
-health_effect_total <- count(by_event_type, health_effect)
+intermediate_data$crop_damage <- intermediate_data$crop_damage * 
+        ifelse(
+                intermediate_data$crop_damage_exponent == "B", 10^9, ifelse(
+                        intermediate_data$crop_damage_exponent == "M", 10^6, ifelse(
+                                intermediate_data$crop_damage_exponent == "K", 10^3, 1
+        )))
 
-top_event_type <- by_event_type %>%
+intermediate_data$property_damage <- intermediate_data$property_damage * 
+        ifelse(
+                intermediate_data$property_damage_exponent == "B", 10^9, ifelse(
+                        intermediate_data$property_damage_exponent == "M", 10^6, ifelse(
+                                intermediate_data$property_damage_exponent == "K", 10^3, 1
+        )))
+```
+
+We now combine the damage values into one and remove unneeded columns.
+```{r}
+intermediate_data <- intermediate_data %>% 
+        mutate(total_damage = crop_damage + property_damage) %>%
+        select(-property_damage, 
+               -crop_damage, 
+               -property_damage_exponent, 
+               -crop_damage_exponent,
+               -begin_date)
+```
+
+We combine injuries and fatalities into one column for the purposes
+of processing, and identify them with a key called fatality or injury.
+``` {r}
+intermediate_data <- intermediate_data %>% 
+        gather(health_effect, health_effect_count, fatalities, injuries)
+```
+
+Grouping by event type helps reduce the sheer number of observations and gives
+us an insight into the events with the greatest impact over the entire period.
+```{r}
+intermediate_data <- group_by(intermediate_data, event_type, health_effect) %>%
+        summarise(health_effect_count = sum(health_effect_count), 
+                  total_damage = sum(total_damage))
+```
+
+From the unique event types, we see that there are many potential duplicates:
+```{r unique events}
+unique(intermediate_data$event_type)
+```
+
+To clean this, we first standardize the case of the text:
+```{r standardize case}
+intermediate_data$event_type <- toupper(intermediate_data$event_type)
+```
+
+Next, we apply a mapping to reduce the duplicated names. Note that it is quite
+arguable which events should be combined. Our approach was to match the list 
+given in section 2.1.1 of the Storm Data documentation.
+
+```{r mapping data}
+mapping <- c("(?<=\\w)ING(?=\\s|$|\\W)", "",
+             "(?<=\\w)S(?=\\s|$|\\W)", "",
+             "^ASTRONOMICAL HIGH TIDE", "STORM SURGE/TIDE",
+             "DEBRI FLOW", "DEBRIS FLOW",
+             "DRY MICROBURST", "THUNDERSTORM WIND",
+             "DUST STORM/HIGH WIND", "DUST STORM",
+             "^EXTREME COLD$", "EXTREME COLD/WIND CHILL",
+             ".*FLASH FLOOD.*", "FLASH FLOOD",
+             "^FOG$", "DENSE FOG",
+             "^FOREST FIRE$", "WILDFIRE",
+             "^FREEZ FOG$", "FROST/FREEZE",
+             "^FREEZE$", "FROST/FREEZE",
+             "GLAZE ICE", "FROST/FREEZE",
+             "GUSTNADO", "THUNDERSTORM WIND",
+             "GUSTY WIND", "HIGH WIND",
+             "HAIL 100", "HAIL",
+             "HAIL/WIND", "HIGH WIND",
+             "^HEAT WAVE$", "HEAT",
+             "^HEAT WAVE DROUGHT$", "DROUGHT",
+             "HEAVY RAIN/FLOOD", "FLOOD",
+             "HEAVY SNOW/HIGH WIND & FLOOD", "FLOOD",
+             "HEAVY RAIN/HIGH SURF", "HEAVY RAIN",
+             "HEAVY SURF/HIGH SURF", "HIGH SURF",
+             "HIGH WIND HEAVY RAIN", "HIGH WIND",
+             "HIGH WIND/COLD", "HIGH WIND",
+             "^HURRICANE$", "HURRICANE (TYPHOON)",
+             "HURRICANE.+", "HURRICANE (TYPHOON)",
+             "ICE JAM FLOOD", "FLOOD",
+             "ICY ROAD", "FROST/FREEZE",
+             "LANDSLIDE", "DEBRIS FLOW",
+             "LIGHTN", "LIGHTNING",
+             "RIVER FLOOD", "FLOOD",
+             "SMALL HAIL", "HAIL",
+             "SEVERE THUNDERSTORM.*", "THUNDERSTORM WIND",
+             "^STORM SURGE$", "STORM SURGE/TIDE",
+             "THUNDERSTORM HAIL", "THUNDERSTORM WIND",
+             "THUNDERSTORM WIND.*", "THUNDERSTORM WIND",
+             "^THUNDERSTORM$", "THUNDERSTORM WIND",
+             "^TORNADO.*", "TORNADO",
+             "TROPICAL STORM.+", "TROPICAL STORM",
+             "TSTM WIND.*", "THUNDERSTORM WIND",
+             "^TYPHOON$", "HURRICANE (TYPHOON)",
+             "URBAN FLOOD", "FLOOD",
+             "URBAN/SML STREAM FLD", "FLOOD",
+             "WIND DAMAGE", "HIGH WIND",
+             "^WIND$", "HIGH WIND",
+             "WILD/FOREST FIRE", "WILDFIRE",
+             "WINTER STORM HIGH WIND", "WINTER STORM"
+             )
+
+dim(mapping) <- c(2, length(mapping)/2)
+
+for(i in 1:dim(mapping)[2]) {
+        intermediate_data$event_type <- gsub(mapping[1,i], 
+                                            mapping[2,i], 
+                                            intermediate_data$event_type,
+                                            perl = TRUE)
+}
+
+
+sort(unique(intermediate_data$event_type))
+```
+
+## Results
+We look at the top ten injury causing events and the top ten fatality causing
+events. This is because our visualizations would be too dense, and not
+particularly useful if we listed all 48 event types.
+```{r top ten health effect}
+health_effect_type_count <- count(intermediate_data, health_effect)
+by_event_type_and_health_effect <- intermediate_data %>%
         group_by(health_effect) %>%
-        filter(rank(health_effect_count, ties.method='first') > (health_effect_total$n[1] - 10))
+        filter(rank(health_effect_count, ties.method = "first") >
+                       health_effect_type_count$n[1] - 10)
 ```
 
-```{r}
-ggplot(top_event_type) + 
+Plotting these provide insight into which events have the greatest impact in 
+terms of health.
+```{r, fig.height=7}
+               
+ggplot(by_event_type_and_health_effect) + 
         theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
         aes(x = event_type, y = health_effect_count, fill = health_effect) +
         geom_bar(stat = "identity", position = "dodge") +
         geom_text(aes(label = health_effect_count), size = 4, vjust = 0) +
         facet_grid(health_effect ~ ., scale = "free_y") +
         xlab("Event Type") +
-        ylab("Number of Health Effects") +
-        ggtitle("Health Effects")
+        ylab("Number of Deaths/Injuries") +
+        ggtitle("Top 13 Health Impacting Weather Events (1996-2011)")
+```  
+    
+We can see that tornados are the most fatal and most injurious by far. Flash
+floods are second most fatal, but regular floods are second most injurious.
+
+Some interesting observations are that the third most injurious, ice storms, 
+are actually not lethal, and hurricanes are quite injurious, but not
+terribly lethal. Rip currents, on the otherhand, are fourth most fatal, but are
+not at all injurious.
+
+### Top Economic Damaging Events
+Next we look at the economic impact of the events. Again, we select only the
+top ten most damaging events to reduce the density of the plot, as we are only
+interested in the most impactful events, anyway.
+
+```{r}
+by_event_type <- group_by(intermediate_data, event_type) %>%
+        summarise(total_damage = sum(total_damage)) 
+
+event_type_count <- tally(by_event_type)
+
+top_ten_total_damage_by_event_type <- by_event_type %>%
+        filter(rank(total_damage, ties.method = "first") >
+                       event_type_count$n[1] - 10)
+        
 ```
+
+```{r, fig.height=6, }
+ggplot(top_ten_total_damage_by_event_type) + 
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        aes(x = event_type, y = total_damage/10^6) +
+        geom_bar(stat = "identity") +
+        geom_text(aes(label = format(round(total_damage/10^6), big.mark = ",")),
+                  size = 4, vjust = -0.5) +
+        xlab("Event Type") +
+        ylab("Total Damage (millions)") +
+        ggtitle("Top 10 Economically Impacting Weather Events (1996-2011)")
+```
+
+By far, floods are the most economically damaging events, by an order of 
+magnitude. Second are hurricanes, and third are tornados.
+
+It is interesting to compare how much impact an event has in terms of economic 
+damage vs health effects. For example, tornados have most impact on human
+health, but a distant third in terms of economic damage. This might be due to
+the localized but sudden nature of a tornado (localized might mean it has 
+trouble doing significant damage, but its suddeness might meant that people
+are less able to get out of the way).
